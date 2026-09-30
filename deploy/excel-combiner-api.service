@@ -1,0 +1,18 @@
+# Install: sudo cp deploy/excel-combiner-api.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now excel-combiner-api
+[Unit]
+Description=Excel Combiner API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/excel-combiner/backend
+# Use the full path from `which node` if Node was installed another way (e.g. nvm).
+ExecStart=/usr/bin/node src/index.js
+Environment=NODE_ENV=production
+Restart=always
+RestartSec=3
+# Runs as a throwaway unprivileged user; the app only needs to read its own folder.
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
