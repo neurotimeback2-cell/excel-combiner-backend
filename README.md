@@ -45,6 +45,7 @@ Logs: `journalctl -u excel-combiner-api -f`
 | `PORT` | `3000` | API port. If changed, update `proxy_pass` in the nginx config too. |
 | `HOST` | `127.0.0.1` | Only nginx on the same server can reach the API. `0.0.0.0` exposes it to the network. |
 | `MAX_FILE_MB` | `100` | Max size of one uploaded file. |
+| `CORS_ORIGIN` | unset | Comma-separated frontend origins permitted to call the API directly, e.g. `https://app.example.com`. Not needed when nginx proxies `/api` on the same origin. |
 
 ### Memory
 

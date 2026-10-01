@@ -14,6 +14,9 @@ const PORT = Number(process.env.PORT) || 3000;
 // 127.0.0.1 keeps the API reachable only through nginx on the same server.
 const HOST = process.env.HOST || '127.0.0.1';
 const MAX_FILE_MB = Number(process.env.MAX_FILE_MB) || 100;
+const CORS_ORIGINS = new Set(
+  (process.env.CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+);
 const EXTENSIONS = ['.xlsx', '.xlsm', '.xlsb', '.xls', '.ods'];
 
 // Files are kept in memory only and never written to disk.
@@ -23,6 +26,19 @@ const upload = multer({
 });
 
 const app = express();
+
+// Required only when the frontend calls this API from another origin.
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (!origin || (!CORS_ORIGINS.has('*') && !CORS_ORIGINS.has(origin))) return next();
+
+  res.set('Access-Control-Allow-Origin', CORS_ORIGINS.has('*') ? '*' : origin);
+  if (!CORS_ORIGINS.has('*')) res.vary('Origin');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
