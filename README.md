@@ -53,7 +53,7 @@ Files are held in RAM while a request is processed: plan for about 8× the total
 
 ## API
 
-- `POST /api/combine` — `multipart/form-data` with one or more `files` fields and optional `addSourceColumn=true`. Returns `{ report, file }`, where `file` is the combined workbook as base64. Errors return `{ error }` with status 400 (bad input) or 500.
+- `POST /api/combine` — `multipart/form-data` with one or more `files` fields and optional `addCompanyColumn=true` and `addSourceColumn=true`. Returns `{ report, file }`, where `file` is the combined workbook as base64. Errors return `{ error }` with status 400 (bad input) or 500.
 - `GET /api/health` — returns `{ ok: true }`.
 
 ## How combining works
@@ -62,6 +62,7 @@ Files are held in RAM while a request is processed: plan for about 8× the total
 - The first non-empty row of each sheet is the header. Columns are matched by header name, so column order may differ. A column present only in some files becomes an extra column, empty for the other files.
 - Rows are appended in upload order. Completely empty rows are skipped; everything else is kept.
 - Columns with data but no header get a name like `Column F`; duplicate headers become `Name (2)`.
+- With `addCompanyColumn`, every sheet gets a first column `Company` holding the file name without its extension (`Pasha Bank.xlsx` → `Pasha Bank`). With `addSourceColumn`, a `Source file` column holds the full file name. If the uploads already have a column with that name, the added one becomes `Company (2)`.
 - Values and number formats (dates, percentages) are kept. Formulas are replaced by their calculated values. Cell styles are not copied.
 
 ## No data loss

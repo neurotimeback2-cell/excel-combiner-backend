@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import { combineFiles, combine, parseWorkbook, verify, SOURCE_COLUMN } from '../src/combine.js';
+import { combineFiles, combine, companyName, parseWorkbook, verify, COMPANY_COLUMN, SOURCE_COLUMN } from '../src/combine.js';
 
 /** Build an .xlsx buffer from { sheetName: arrayOfRows }. */
 function makeXlsx(sheets, { date1904 = false, bookType = 'xlsx' } = {}) {
@@ -75,6 +75,50 @@ test('adds a source file column when requested', () => {
   const b = makeXlsx({ S: [['A'], [2]] });
   const { buffer } = combineFiles([{ name: 'a.xlsx', buffer: a }, { name: 'b.xlsx', buffer: b }], { addSourceColumn: true });
   assert.deepEqual(readBack(buffer).S, [[SOURCE_COLUMN, 'A'], ['a.xlsx', 1], ['b.xlsx', 2]]);
+});
+
+test('adds a company column taken from the file name, on every sheet', () => {
+  const a = makeXlsx({ Loans: [['Id', 'Amount'], [1, 100], [2, 200]], Deposits: [['Id'], [7]] });
+  const b = makeXlsx({ Loans: [['Id', 'Amount'], [3, 300]], Deposits: [['Id'], [8]] });
+  const c = makeXlsx({ Loans: [['Id', 'Amount'], [4, 400]] }, { bookType: 'biff8' });
+  const { buffer } = combineFiles(
+    [{ name: 'Capital Bank.xlsx', buffer: a }, { name: 'Pasha Bank .xlsx', buffer: b }, { name: 'A.B. Bank.xls', buffer: c }],
+    { addCompanyColumn: true },
+  );
+  assert.deepEqual(readBack(buffer), {
+    Loans: [
+      [COMPANY_COLUMN, 'Id', 'Amount'],
+      ['Capital Bank', 1, 100],
+      ['Capital Bank', 2, 200],
+      ['Pasha Bank', 3, 300],
+      ['A.B. Bank', 4, 400],
+    ],
+    Deposits: [[COMPANY_COLUMN, 'Id'], ['Capital Bank', 7], ['Pasha Bank', 8]],
+  });
+});
+
+test('company and source file columns can be combined; an existing "Company" column is kept', () => {
+  const a = makeXlsx({ S: [['Company', 'Amount'], ['Client LLC', 5]] });
+  const { buffer } = combineFiles([{ name: 'Kapital Bank.xlsx', buffer: a }], { addCompanyColumn: true, addSourceColumn: true });
+  assert.deepEqual(readBack(buffer).S, [
+    ['Company (2)', SOURCE_COLUMN, 'Company', 'Amount'],
+    ['Kapital Bank', 'Kapital Bank.xlsx', 'Client LLC', 5],
+  ]);
+});
+
+test('company name is the file name without its extension', () => {
+  assert.equal(companyName('Capital Bank.xlsx'), 'Capital Bank');
+  assert.equal(companyName('Pasha Bank .xls'), 'Pasha Bank');
+  assert.equal(companyName('A.B. Bank.xlsm'), 'A.B. Bank');
+  assert.equal(companyName('.xlsx'), '.xlsx');
+});
+
+test('verification catches a wrong company name', () => {
+  const opts = { addCompanyColumn: true };
+  const files = [parseWorkbook(makeXlsx({ S: [['A'], [1]] }), 'Capital Bank.xlsx')];
+  const { workbook } = combine(files, opts);
+  workbook.Sheets.S['!data'][1][0].v = 'Pasha Bank';
+  assert.throws(() => verify(files, XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), opts), /wrong "Company" value/);
 });
 
 test('preserves value types, number formats, and odd strings', () => {

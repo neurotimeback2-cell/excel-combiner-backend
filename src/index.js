@@ -54,7 +54,10 @@ app.post('/api/combine', upload.array('files'), (req, res) => {
   }
   const started = Date.now();
   try {
-    const { buffer, report } = combineFiles(inputs, { addSourceColumn: req.body.addSourceColumn === 'true' });
+    const { buffer, report } = combineFiles(inputs, {
+      addCompanyColumn: req.body.addCompanyColumn === 'true',
+      addSourceColumn: req.body.addSourceColumn === 'true',
+    });
     console.log(`Combined ${inputs.length} files, ${report.totalRows} rows in ${Date.now() - started} ms`);
     res.json({ report, file: buffer.toString('base64') });
   } catch (err) {

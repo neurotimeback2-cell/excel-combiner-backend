@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 
 export const SOURCE_COLUMN = 'Source file';
+export const COMPANY_COLUMN = 'Company';
 
 const EXCEL_MAX_ROWS = 1048576;
 const EXCEL_MAX_COLS = 16384;
@@ -14,6 +15,26 @@ export class UserError extends Error {}
 
 const normKey = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
 const normNewlines = (s) => s.replace(/\r\n?/g, '\n');
+
+/** First of `base`, `base (2)`, `base (3)`, … whose key is not in `taken`. */
+function uniqueName(base, taken) {
+  let name = base;
+  for (let n = 2; taken.has(normKey(name)); n++) name = `${base} (${n})`;
+  return name;
+}
+
+/** "Capital Bank .xlsx" → "Capital Bank" */
+export function companyName(fileName) {
+  return fileName.replace(/\.[^.]+$/, '').trim() || fileName;
+}
+
+/** Columns placed before the data columns, filled from the file each row came from. */
+function extraColumns({ addCompanyColumn = false, addSourceColumn = false }) {
+  return [
+    ...(addCompanyColumn ? [{ name: COMPANY_COLUMN, value: (file) => companyName(file.name) }] : []),
+    ...(addSourceColumn ? [{ name: SOURCE_COLUMN, value: (file) => file.name }] : []),
+  ];
+}
 
 function isEmpty(cell) {
   return !cell || cell.t === 'z' || cell.v == null || (cell.t === 's' && cell.v === '');
@@ -66,9 +87,7 @@ function parseSheet(ws, name, date1904) {
   for (let c = 0; c < width; c++) {
     const text = cellText(headerRow[c]);
     if (!text && !colHasData[c]) continue;
-    const base = text || `Column ${XLSX.utils.encode_col(c)}`;
-    let colName = base;
-    for (let n = 2; usedKeys.has(normKey(colName)); n++) colName = `${base} (${n})`;
+    const colName = uniqueName(text || `Column ${XLSX.utils.encode_col(c)}`, usedKeys);
     usedKeys.add(normKey(colName));
     sheet.columns.push({ name: colName, key: normKey(colName) });
     colIndexes.push(c);
@@ -99,7 +118,8 @@ export function parseWorkbook(buffer, fileName) {
 }
 
 /** Merge parsed files sheet-by-sheet (matched by sheet name) and column-by-column (matched by header). */
-export function combine(files, { addSourceColumn = false } = {}) {
+export function combine(files, opts = {}) {
+  const extras = extraColumns(opts);
   const outSheets = new Map();
 
   files.forEach((file, fileIdx) => {
@@ -130,11 +150,12 @@ export function combine(files, { addSourceColumn = false } = {}) {
   });
 
   const workbook = XLSX.utils.book_new();
-  const offset = addSourceColumn ? 1 : 0;
+  const offset = extras.length;
   const reportSheets = [];
 
   for (const out of outSheets.values()) {
-    const header = [...(addSourceColumn ? [SOURCE_COLUMN] : []), ...out.columns];
+    // Renamed to "Company (2)" etc. if the uploaded sheets already have a column with that name.
+    const header = [...extras.map((col) => uniqueName(col.name, out.colIndex)), ...out.columns];
     if (out.rows.length + 1 > EXCEL_MAX_ROWS) {
       throw new UserError(`Sheet "${out.name}" would have ${out.rows.length} rows, more than Excel's limit of ${EXCEL_MAX_ROWS - 1}.`);
     }
@@ -144,8 +165,7 @@ export function combine(files, { addSourceColumn = false } = {}) {
 
     const data = [header.map((v) => ({ t: 's', v }))];
     for (const { fileIdx, cells } of out.rows) {
-      const row = [];
-      if (addSourceColumn) row[0] = { t: 's', v: files[fileIdx].name };
+      const row = extras.map((col) => ({ t: 's', v: col.value(files[fileIdx]) }));
       cells.forEach((cell, j) => { row[offset + j] = cell; });
       data.push(row);
     }
@@ -206,10 +226,11 @@ function sameValue(expected, actual) {
  * Read the generated file back and check that every non-empty input cell is present,
  * in the right sheet, row and column, and that the output contains nothing extra.
  */
-export function verify(files, buffer, { addSourceColumn = false } = {}) {
+export function verify(files, buffer, opts = {}) {
   const fail = (msg) => { throw new Error(`Verification failed: ${msg}. The combined file was not produced.`); };
   const wb = XLSX.read(buffer, READ_OPTS);
-  const offset = addSourceColumn ? 1 : 0;
+  const extras = extraColumns(opts);
+  const offset = extras.length;
 
   const outByKey = new Map();
   for (const name of wb.SheetNames) {
@@ -240,7 +261,9 @@ export function verify(files, buffer, { addSourceColumn = false } = {}) {
       for (const row of sheet.rows) {
         const outRow = out.data[out.cursor] ?? [];
         const where = `sheet "${out.name}", row ${out.cursor + 1} (from "${file.name}")`;
-        if (addSourceColumn && outRow[0]?.v !== file.name) fail(`wrong source file name in ${where}`);
+        extras.forEach((col, i) => {
+          if (outRow[i]?.v !== col.value(file)) fail(`wrong "${col.name}" value in ${where}`);
+        });
         row.forEach((cell, j) => {
           if (!cell) return;
           if (!sameValue(cell, outRow[cols[j]])) fail(`value in ${where}, column "${sheet.columns[j].name}" does not match the input`);
