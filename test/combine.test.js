@@ -151,6 +151,24 @@ test('preserves value types, number formats, and odd strings', () => {
   assert.equal(out.E4.v, 1e21);
 });
 
+test('preserves literal XML entities in text cells during read-back verification', () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Title'],
+    ['&quot;Bank Respublika&quot; &quot;Accessbank&quot;ı alır?'],
+    ['Literal &amp; and &lt; text'],
+  ]), 'YouTube');
+  const input = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', bookSST: true });
+  const { buffer, report } = combineFiles([{ name: 'AccessBank (1).xlsx', buffer: input }]);
+
+  assert.equal(report.verified, true);
+  assert.deepEqual(readBack(buffer).YouTube, [
+    ['Title'],
+    ['&quot;Bank Respublika&quot; &quot;Accessbank&quot;ı alır?'],
+    ['Literal &amp; and &lt; text'],
+  ]);
+});
+
 test('converts dates from 1904-date-system workbooks', () => {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([['Date', 'N'], [43830, 43830]]); // 2024-01-01 in the 1904 system

@@ -284,7 +284,10 @@ export function verify(files, buffer, opts = {}) {
 export function combineFiles(inputs, opts = {}) {
   const files = inputs.map((f) => parseWorkbook(f.buffer, f.name));
   const { workbook, report } = combine(files, opts);
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true });
+  // Inline strings are decoded twice by SheetJS on read-back (e.g. literal
+  // "&quot;" becomes a quote), causing a false verification failure. Shared
+  // strings preserve those values through the write/read cycle.
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true, bookSST: true });
   verify(files, buffer, opts);
   report.verified = true;
   return { buffer, report };
