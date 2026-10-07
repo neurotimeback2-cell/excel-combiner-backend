@@ -169,6 +169,21 @@ test('preserves literal XML entities in text cells during read-back verification
   ]);
 });
 
+test('preserves literal Excel escape sequences in text cells and headers', () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Content', 'Label _x005F_x0041_'],
+    ['A literal _x005F_x000D_ marker', '_x005F_x0042_ and _x005F_X000A_'],
+  ]), 'News');
+  // Excel escapes the leading underscore of literal _xHHHH_ text in input files.
+  const input = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', bookSST: true });
+  const expected = readBack(input).News;
+  const { buffer, report } = combineFiles([{ name: 'Unibank.xlsx', buffer: input }]);
+
+  assert.equal(report.verified, true);
+  assert.deepEqual(readBack(buffer).News, expected);
+});
+
 test('converts dates from 1904-date-system workbooks', () => {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([['Date', 'N'], [43830, 43830]]); // 2024-01-01 in the 1904 system

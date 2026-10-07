@@ -287,7 +287,26 @@ export function combineFiles(inputs, opts = {}) {
   // Inline strings are decoded twice by SheetJS on read-back (e.g. literal
   // "&quot;" becomes a quote), causing a false verification failure. Shared
   // strings preserve those values through the write/read cycle.
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true, bookSST: true });
+  // SheetJS does not escape literal Excel _xHHHH_ sequences when writing XML.
+  // Prefix their underscore with _x005F_ so Excel and SheetJS read them as text.
+  // Restore the in-memory workbook after writing.
+  const escaped = [];
+  let buffer;
+  try {
+    for (const name of workbook.SheetNames) {
+      for (const row of workbook.Sheets[name]['!data'] ?? []) {
+        if (!row) continue;
+        for (const cell of row) {
+          if (cell?.t !== 's' || typeof cell.v !== 'string' || !/_x[\da-f]{4}_/i.test(cell.v)) continue;
+          escaped.push([cell, cell.v]);
+          cell.v = cell.v.replace(/_x[\da-f]{4}_/gi, (match) => `_x005F${match}`);
+        }
+      }
+    }
+    buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true, bookSST: true });
+  } finally {
+    for (const [cell, value] of escaped) cell.v = value;
+  }
   verify(files, buffer, opts);
   report.verified = true;
   return { buffer, report };
