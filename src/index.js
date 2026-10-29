@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
+import { addAllSheet } from './all-sheet.js';
 import { combineFiles, UserError } from './combine.js';
 
 // Optional .env in the working directory; real environment variables take precedence.
@@ -64,6 +65,24 @@ app.post('/api/combine', upload.array('files'), (req, res) => {
     if (err instanceof UserError) return res.status(400).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: err.message || 'Unexpected error while combining files.' });
+  }
+});
+
+app.post('/api/all-sheet', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+  const name = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+  if (!EXTENSIONS.includes(path.extname(name).toLowerCase())) {
+    return res.status(400).json({ error: `Not an Excel file: ${name}` });
+  }
+  const started = Date.now();
+  try {
+    const { buffer, report } = addAllSheet(req.file.buffer, name);
+    console.log(`Added All sheet to ${name}: ${report.totalRows} rows from ${report.sheets.length} sheets in ${Date.now() - started} ms`);
+    res.json({ report, file: buffer.toString('base64') });
+  } catch (err) {
+    if (err instanceof UserError) return res.status(400).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Unexpected error while building the All sheet.' });
   }
 });
 

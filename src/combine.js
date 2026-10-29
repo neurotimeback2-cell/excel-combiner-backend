@@ -3,21 +3,21 @@ import * as XLSX from 'xlsx';
 export const SOURCE_COLUMN = 'Source file';
 export const COMPANY_COLUMN = 'Company';
 
-const EXCEL_MAX_ROWS = 1048576;
-const EXCEL_MAX_COLS = 16384;
+export const EXCEL_MAX_ROWS = 1048576;
+export const EXCEL_MAX_COLS = 16384;
 // Serial date difference between the 1904 and 1900 date systems.
-const DATE_1904_OFFSET = 1462;
+export const DATE_1904_OFFSET = 1462;
 
-const READ_OPTS = { type: 'buffer', dense: true, cellNF: true, cellDates: false, cellFormula: false, cellHTML: false };
+export const READ_OPTS = { type: 'buffer', dense: true, cellNF: true, cellDates: false, cellFormula: false, cellHTML: false };
 
 /** Error caused by the uploaded files (shown to the user as-is). */
 export class UserError extends Error {}
 
-const normKey = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
+export const normKey = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
 const normNewlines = (s) => s.replace(/\r\n?/g, '\n');
 
 /** First of `base`, `base (2)`, `base (3)`, … whose key is not in `taken`. */
-function uniqueName(base, taken) {
+export function uniqueName(base, taken) {
   let name = base;
   for (let n = 2; taken.has(normKey(name)); n++) name = `${base} (${n})`;
   return name;
@@ -36,11 +36,11 @@ function extraColumns({ addCompanyColumn = false, addSourceColumn = false }) {
   ];
 }
 
-function isEmpty(cell) {
+export function isEmpty(cell) {
   return !cell || cell.t === 'z' || cell.v == null || (cell.t === 's' && cell.v === '');
 }
 
-function cellText(cell) {
+export function cellText(cell) {
   return isEmpty(cell) ? '' : String(cell.w ?? cell.v).trim();
 }
 
@@ -103,18 +103,25 @@ function parseSheet(ws, name, date1904) {
   return sheet;
 }
 
-export function parseWorkbook(buffer, fileName) {
-  let wb;
+export function readWorkbook(buffer, fileName, extraOpts = {}) {
   try {
-    wb = XLSX.read(buffer, READ_OPTS);
+    return XLSX.read(buffer, { ...READ_OPTS, ...extraOpts });
   } catch (err) {
     throw new UserError(`Cannot read "${fileName}": ${err.message}`);
   }
-  const date1904 = Boolean(wb.Workbook?.WBProps?.date1904);
-  const sheets = wb.SheetNames
-    .filter((name) => !wb.Sheets[name]['!type'] || wb.Sheets[name]['!type'] === 'sheet') // skip chart/macro sheets
+}
+
+/** Parse every worksheet; chart and macro sheets are skipped. */
+export function parseSheets(wb, { keepDateSystem = false } = {}) {
+  // Dates are converted to the 1900 system unless they stay in the same (possibly 1904) workbook.
+  const date1904 = !keepDateSystem && Boolean(wb.Workbook?.WBProps?.date1904);
+  return wb.SheetNames
+    .filter((name) => !wb.Sheets[name]['!type'] || wb.Sheets[name]['!type'] === 'sheet')
     .map((name) => parseSheet(wb.Sheets[name], name, date1904));
-  return { name: fileName, sheets };
+}
+
+export function parseWorkbook(buffer, fileName) {
+  return { name: fileName, sheets: parseSheets(readWorkbook(buffer, fileName)) };
 }
 
 /** Merge parsed files sheet-by-sheet (matched by sheet name) and column-by-column (matched by header). */
@@ -205,7 +212,7 @@ export function combine(files, opts = {}) {
   return { workbook, report };
 }
 
-function columnWidths(data, width) {
+export function columnWidths(data, width) {
   const widths = new Array(width).fill(10);
   for (const row of data.slice(0, 200)) {
     row.forEach((cell, c) => {
@@ -216,7 +223,7 @@ function columnWidths(data, width) {
   return widths.map((wch) => ({ wch }));
 }
 
-function sameValue(expected, actual) {
+export function sameValue(expected, actual) {
   if (isEmpty(actual) || expected.t !== actual.t) return false;
   if (expected.t === 's') return normNewlines(expected.v) === normNewlines(actual.v);
   return expected.v === actual.v;
@@ -280,16 +287,22 @@ export function verify(files, buffer, opts = {}) {
   }
 }
 
-/** @param {{name: string, buffer: Buffer}[]} inputs */
-export function combineFiles(inputs, opts = {}) {
-  const files = inputs.map((f) => parseWorkbook(f.buffer, f.name));
-  const { workbook, report } = combine(files, opts);
+/** Write an .xlsx buffer in a way that reads back exactly (see below). */
+export function writeWorkbook(workbook) {
   // Inline strings are decoded twice by SheetJS on read-back (e.g. literal
   // "&quot;" becomes a quote), causing a false verification failure. Shared
   // strings preserve those values through the write/read cycle.
   // SheetJS does not escape literal Excel _xHHHH_ sequences when writing XML.
   // Prefix their underscore with _x005F_ so Excel and SheetJS read them as text.
   // Restore the in-memory workbook after writing.
+  // SheetJS crashes on dense sheets whose range ends below the last stored row
+  // (uploaded files often declare 1000 rows but store fewer), so fill the gaps.
+  for (const name of workbook.SheetNames) {
+    const ws = workbook.Sheets[name];
+    if (!ws['!data'] || !ws['!ref']) continue;
+    const lastRow = XLSX.utils.decode_range(ws['!ref']).e.r;
+    for (let r = 0; r <= lastRow; r++) ws['!data'][r] ??= [];
+  }
   const escaped = [];
   let buffer;
   try {
@@ -307,6 +320,14 @@ export function combineFiles(inputs, opts = {}) {
   } finally {
     for (const [cell, value] of escaped) cell.v = value;
   }
+  return buffer;
+}
+
+/** @param {{name: string, buffer: Buffer}[]} inputs */
+export function combineFiles(inputs, opts = {}) {
+  const files = inputs.map((f) => parseWorkbook(f.buffer, f.name));
+  const { workbook, report } = combine(files, opts);
+  const buffer = writeWorkbook(workbook);
   verify(files, buffer, opts);
   report.verified = true;
   return { buffer, report };

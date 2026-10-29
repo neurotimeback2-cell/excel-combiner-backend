@@ -54,6 +54,7 @@ Files are held in RAM while a request is processed: plan for about 8× the total
 ## API
 
 - `POST /api/combine` — `multipart/form-data` with one or more `files` fields and optional `addCompanyColumn=true` and `addSourceColumn=true`. Returns `{ report, file }`, where `file` is the combined workbook as base64. Errors return `{ error }` with status 400 (bad input) or 500.
+- `POST /api/all-sheet` — `multipart/form-data` with one `file` field. Returns `{ report, file }`, where `file` is the same workbook with an added "All" sheet, as base64. Errors as above.
 - `GET /api/health` — returns `{ ok: true }`.
 
 ## How combining works
@@ -65,8 +66,24 @@ Files are held in RAM while a request is processed: plan for about 8× the total
 - With `addCompanyColumn`, every sheet gets a first column `Company` holding the file name without its extension (`Pasha Bank.xlsx` → `Pasha Bank`). With `addSourceColumn`, a `Source file` column holds the full file name. If the uploads already have a column with that name, the added one becomes `Company (2)`.
 - Values and number formats (dates, percentages) are kept. Formulas are replaced by their calculated values. Cell styles are not copied.
 
+## How the "All" sheet works
+
+`POST /api/all-sheet` takes one workbook with a sheet per platform — posts (`Facebook`, `Instagram`, `Telegram`, …) and comments (`Facebook comments`, …) — and adds a first sheet `All` with every row of every sheet, one sheet after another. The original sheets are not changed. Code: `src/all-sheet.js`.
+
+- **Platform** and **Type** come from the sheet name: `Facebook comments` → Facebook / Comment, `Facebook` → Facebook / Post. New platforms need no code change.
+- Columns are matched by name, ignoring case, spaces and underscores (`comment_url` = `Comment URL`). The column list and the names each column accepts are in `COLUMNS` in `src/all-sheet.js`; comment columns map like this: `comment_url` → URL, `post_url` → Post URL, `post_content` → Post content, `comment_date` / `comment_date_text` → Date, `like_count` → Like Count.
+- Left out: `Title` (YouTube; Content holds the text) and `Source` when it only repeats the platform. Columns that match nothing are added at the end of All, so no data is dropped. Columns no sheet has are not shown.
+- Values are unified so the sheet can be filtered and pivoted:
+  - Sentiment → `Müsbət` / `Neytral` / `Mənfi` (from `1` / `0` / `-1`, `NEYTRAL`, `Neqativ`, …).
+  - Category → one spelling per category (`ictimai_rəy`, `ictimai rəy`, `İctimai rəy` → `İctimai rəy`).
+  - Date and Day → real Excel dates, including texts like `2025-09-24 10:03:37` and `17:03, 23 Dekabr 2025, Çərşənbə axşamı`. Day is filled from Date where it's missing. Unreadable dates stay as text.
+  - Counts stored as text become numbers; Author is trimmed.
+- An existing `All` sheet is rebuilt, not merged into itself.
+
 ## No data loss
 
 After building the output, the server reads the generated file back and checks that every non-empty cell of every upload is in the right sheet, row and column, with no extra rows or cells. If anything doesn't match, the request fails instead of returning a file. Unreadable files fail the whole request; they are never skipped.
+
+For the "All" sheet, the server reads the uploaded and the generated file again from scratch and checks that every original sheet is unchanged cell by cell, and that every source row is in All with every value in the right column (after the unifying described above).
 
 Nothing is stored: uploads and results exist only in memory during the request, and there is no database.
