@@ -5,6 +5,8 @@ export const COMPANY_COLUMN = 'Company';
 
 export const EXCEL_MAX_ROWS = 1048576;
 export const EXCEL_MAX_COLS = 16384;
+// Excel stores at most 32,767 characters in a cell; longer texts are cut to fit.
+export const EXCEL_MAX_TEXT = 32767;
 // Serial date difference between the 1904 and 1900 date systems.
 export const DATE_1904_OFFSET = 1462;
 
@@ -15,6 +17,26 @@ export class UserError extends Error {}
 
 export const normKey = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
 const normNewlines = (s) => s.replace(/\r\n?/g, '\n');
+
+/** The text as Excel can store it: cut to EXCEL_MAX_TEXT characters, without splitting an emoji. */
+export function fitText(s) {
+  if (s.length <= EXCEL_MAX_TEXT) return s;
+  const cut = s.slice(0, EXCEL_MAX_TEXT);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+/** Cells whose text is longer than Excel allows (cut by writeWorkbook), as cell refs per sheet. */
+export function longTexts(workbook) {
+  const found = [];
+  for (const name of workbook.SheetNames) {
+    const cells = [];
+    (workbook.Sheets[name]['!data'] ?? []).forEach((row, r) => (row ?? []).forEach((cell, c) => {
+      if (cell?.t === 's' && typeof cell.v === 'string' && cell.v.length > EXCEL_MAX_TEXT) cells.push(XLSX.utils.encode_cell({ r, c }));
+    }));
+    if (cells.length) found.push({ sheet: name, cells });
+  }
+  return found;
+}
 
 /** First of `base`, `base (2)`, `base (3)`, … whose key is not in `taken`. */
 export function uniqueName(base, taken) {
@@ -225,7 +247,7 @@ export function columnWidths(data, width) {
 
 export function sameValue(expected, actual) {
   if (isEmpty(actual) || expected.t !== actual.t) return false;
-  if (expected.t === 's') return normNewlines(expected.v) === normNewlines(actual.v);
+  if (expected.t === 's') return normNewlines(fitText(expected.v)) === normNewlines(actual.v);
   return expected.v === actual.v;
 }
 
@@ -292,6 +314,7 @@ export function writeWorkbook(workbook) {
   // Inline strings are decoded twice by SheetJS on read-back (e.g. literal
   // "&quot;" becomes a quote), causing a false verification failure. Shared
   // strings preserve those values through the write/read cycle.
+  // Texts longer than Excel's limit are cut to fit (SheetJS refuses to write them).
   // SheetJS does not escape literal Excel _xHHHH_ sequences when writing XML.
   // Prefix their underscore with _x005F_ so Excel and SheetJS read them as text.
   // Restore the in-memory workbook after writing.
@@ -303,22 +326,24 @@ export function writeWorkbook(workbook) {
     const lastRow = XLSX.utils.decode_range(ws['!ref']).e.r;
     for (let r = 0; r <= lastRow; r++) ws['!data'][r] ??= [];
   }
-  const escaped = [];
+  const originals = [];
   let buffer;
   try {
     for (const name of workbook.SheetNames) {
       for (const row of workbook.Sheets[name]['!data'] ?? []) {
         if (!row) continue;
         for (const cell of row) {
-          if (cell?.t !== 's' || typeof cell.v !== 'string' || !/_x[\da-f]{4}_/i.test(cell.v)) continue;
-          escaped.push([cell, cell.v]);
-          cell.v = cell.v.replace(/_x[\da-f]{4}_/gi, (match) => `_x005F${match}`);
+          if (cell?.t !== 's' || typeof cell.v !== 'string') continue;
+          const value = fitText(cell.v).replace(/_x[\da-f]{4}_/gi, (match) => `_x005F${match}`);
+          if (value === cell.v) continue;
+          originals.push([cell, cell.v]);
+          cell.v = value;
         }
       }
     }
     buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true, bookSST: true });
   } finally {
-    for (const [cell, value] of escaped) cell.v = value;
+    for (const [cell, value] of originals) cell.v = value;
   }
   return buffer;
 }
@@ -327,6 +352,7 @@ export function writeWorkbook(workbook) {
 export function combineFiles(inputs, opts = {}) {
   const files = inputs.map((f) => parseWorkbook(f.buffer, f.name));
   const { workbook, report } = combine(files, opts);
+  report.truncatedTexts = longTexts(workbook);
   const buffer = writeWorkbook(workbook);
   verify(files, buffer, opts);
   report.verified = true;

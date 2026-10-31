@@ -242,3 +242,14 @@ test('handles many files with many rows', () => {
   assert.equal(report.sheets[1].totalRows, expected);
   assert.equal(report.verified, true);
 });
+
+test('cuts texts longer than Excel allows to 32,767 characters and reports them', () => {
+  // Excel can't hold such a cell, but files written by other tools can; ODS lets the test write one.
+  const long = 'a'.repeat(32766) + '😀' + 'b'.repeat(100);
+  const input = makeXlsx({ Facebook: [['Content'], ['short'], [long]] }, { bookType: 'ods' });
+  const { buffer, report } = combineFiles([{ name: 'a.ods', buffer: input }]);
+
+  assert.deepEqual(readBack(buffer).Facebook, [['Content'], ['short'], ['a'.repeat(32766)]]);
+  assert.deepEqual(report.truncatedTexts, [{ sheet: 'Facebook', cells: ['A3'] }]);
+  assert.equal(report.verified, true);
+});

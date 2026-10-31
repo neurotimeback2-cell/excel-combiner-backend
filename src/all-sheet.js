@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import {
   DATE_1904_OFFSET, EXCEL_MAX_ROWS, UserError,
-  cellText, columnWidths, isEmpty, normKey, parseSheets, readWorkbook, sameValue, uniqueName, writeWorkbook,
+  cellText, columnWidths, isEmpty, longTexts, normKey, parseSheets, readWorkbook, sameValue, uniqueName, writeWorkbook,
 } from './combine.js';
 
 export const ALL_SHEET = 'All';
@@ -368,6 +368,7 @@ export function addAllSheet(inputBuffer, fileName) {
     daysFilled,
     unreadDates,
     replacedExisting: Boolean(existing),
+    truncatedTexts: longTexts(wb),
     verified: true,
   };
   return { buffer, report };

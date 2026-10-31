@@ -218,3 +218,16 @@ test('describes sheets by name', () => {
 test('rejects files without data', () => {
   assert.throws(() => addAllSheet(makeXlsx({ Empty: [] }), 'empty.xlsx'), /no sheets with data/);
 });
+
+test('cuts texts longer than Excel allows in the original sheets and in "All"', () => {
+  const long = 'x'.repeat(40000);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['ID', 'Content'], [1, long]]), 'Facebook');
+  // Excel can't hold such a cell, but files written by other tools can; ODS lets the test write one.
+  const { buffer, report } = addAllSheet(XLSX.write(wb, { type: 'buffer', bookType: 'ods' }), 'posts.ods');
+
+  const out = XLSX.read(buffer, { type: 'buffer' });
+  assert.equal(out.Sheets.Facebook.B2.v, 'x'.repeat(32767));
+  assert.deepEqual(report.truncatedTexts, [{ sheet: 'All', cells: ['D2'] }, { sheet: 'Facebook', cells: ['B2'] }]);
+  assert.equal(report.verified, true);
+});
